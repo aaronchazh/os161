@@ -274,6 +274,20 @@ cmd_panic(int nargs, char **args)
 }
 
 /*
+ * Command for doing dth.
+ */
+static
+int
+cmd_dth(int nargs, char **args)
+{
+	(void)nargs;
+	(void)args;
+	
+	dbflags = 0x0010;
+	return 0;
+}
+
+/*
  * Command for shutting down.
  */
 static
@@ -547,7 +561,7 @@ static struct {
 	{ "pwd",	cmd_pwd },
 	{ "sync",	cmd_sync },
 	{ "panic",	cmd_panic },
-	{ "dth",    cmd_quit },
+	{ "dth",    cmd_dth },
 	{ "q",		cmd_quit },
 	{ "exit",	cmd_quit },
 	{ "halt",	cmd_quit },
