@@ -436,6 +436,7 @@ static const char *opsmenu[] = {
 	"[pwd]     Print current directory   ",
 	"[sync]    Sync filesystems          ",
 	"[panic]   Intentional panic         ",
+	"[dth]	  Enable DB_THREADS messages ",
 	"[q]       Quit and shut down        ",
 	NULL
 };
@@ -546,6 +547,7 @@ static struct {
 	{ "pwd",	cmd_pwd },
 	{ "sync",	cmd_sync },
 	{ "panic",	cmd_panic },
+	{ "dth",    cmd_quit },
 	{ "q",		cmd_quit },
 	{ "exit",	cmd_quit },
 	{ "halt",	cmd_quit },
@@ -711,3 +713,4 @@ menu(char *args)
 		menu_execute(buf, 0);
 	}
 }
+
