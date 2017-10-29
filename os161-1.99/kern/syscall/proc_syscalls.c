@@ -89,7 +89,7 @@ void sys__exit(int exitcode) {
   p->exit_code = _MKWAIT_EXIT(exitcode);
   cv_broadcast(p->process_cv, p->wait_lock);
   DEBUG(DB_SYSCALL,"to reuse: %d\n", p->pid);
-  reuse_pid(p);
+  //reuse_pid(p);
 
 
   lock_acquire(p->child_lock);
