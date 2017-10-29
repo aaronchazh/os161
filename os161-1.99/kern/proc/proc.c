@@ -50,6 +50,9 @@
 #include <vfs.h>
 #include <synch.h>
 #include <kern/fcntl.h>  
+#include "opt-A2.h"
+#include <array.h>
+#include <limits.h>
 
 /*
  * The process for the kernel; this holds all the kernel-only threads.
@@ -69,7 +72,59 @@ static struct semaphore *proc_count_mutex;
 struct semaphore *no_proc_sem;   
 #endif  // UW
 
+#if OPT_A2
+pid_t pid = PID_MIN - 1;
+struct array *kprocesses;
+struct array *reuse;
 
+pid_t generate_pid(void) {
+	if (reuse != NULL && array_num(reuse) != 0) {
+		pid_t *reused = array_get(reuse, 0);
+		array_remove(reuse, 0);
+		return *reused;
+	}
+	pid++;
+	return pid;
+}
+
+unsigned get_index(struct array *processes, pid_t pid) {
+	for (unsigned i = 0; i < array_num(processes); i++) {
+		struct proc *p = array_get(processes, i);
+		if (p->pid == pid) {
+			return i;
+		}
+	}
+	return PID_MAX + 1;
+}
+
+struct proc* get_process(struct array *processes, pid_t pid) {
+	unsigned index = get_index(processes, pid);
+	if (index > PID_MAX) {
+		return NULL;
+	}
+	return array_get(processes, index);
+}
+
+struct proc* get_kprocess(pid_t pid) {
+	return get_process(kprocesses, pid);
+}
+
+void add_process(struct proc *p) {
+	if (kprocesses == NULL) {
+		kprocesses = array_create();
+	}
+	array_add(kprocesses, p, NULL);
+}
+
+void reuse_pid(struct proc *p) {
+	if (reuse == NULL) {
+		reuse = array_create();
+	}
+	int pid = p->pid;
+	array_add(reuse, &pid, NULL);
+}
+
+#endif
 
 /*
  * Create a proc structure.
@@ -102,6 +157,47 @@ proc_create(const char *name)
 #ifdef UW
 	proc->console = NULL;
 #endif // UW
+
+	#if OPT_A2
+	proc->pid = generate_pid();
+	proc->exited = false;
+	proc->exit_code = 0;
+	proc->wait_lock = lock_create("wait");
+	if (proc->wait_lock == NULL) {
+		lock_destroy(proc->wait_lock);
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
+	proc->child_lock = lock_create("child");
+	if (proc->child_lock == NULL) {
+		lock_destroy(proc->wait_lock);
+		lock_destroy(proc->child_lock);
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
+	proc->process_cv = cv_create("process_cv");
+	if (proc->process_cv == NULL) {
+		cv_destroy(proc->process_cv);
+		lock_destroy(proc->child_lock);
+		lock_destroy(proc->wait_lock);
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
+	proc->children = array_create();
+	if (proc->children == NULL) {
+		array_destroy(proc->children);
+		cv_destroy(proc->process_cv);
+		lock_destroy(proc->child_lock);
+		lock_destroy(proc->wait_lock);
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
+	add_process(proc);
+	#endif
 
 	return proc;
 }
@@ -165,6 +261,26 @@ proc_destroy(struct proc *proc)
 
 	threadarray_cleanup(&proc->p_threads);
 	spinlock_cleanup(&proc->p_lock);
+
+	#if OPT_A2
+	unsigned index = get_index(kprocesses, pid);
+	if (index <= PID_MAX) {
+		array_remove(kprocesses, index);
+		if (array_num(kprocesses) == 0) {
+			array_destroy(kprocesses);
+			kprocesses = NULL;
+		}
+	}
+	if (reuse != NULL && array_num(reuse) == 0) {
+			array_destroy(reuse);
+			reuse = NULL;
+	}
+	KASSERT(array_num(proc->children) == 0);
+	array_destroy(proc->children);
+	lock_destroy(proc->child_lock);
+	lock_destroy(proc->wait_lock);
+	cv_destroy(proc->process_cv);
+	#endif
 
 	kfree(proc->p_name);
 	kfree(proc);
@@ -364,3 +480,4 @@ curproc_setas(struct addrspace *newas)
 	spinlock_release(&proc->p_lock);
 	return oldas;
 }
+
