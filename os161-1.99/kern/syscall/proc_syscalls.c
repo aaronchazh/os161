@@ -13,6 +13,9 @@
 #include <array.h>
 #include <mips/trapframe.h>
 #include <synch.h>
+#include <vfs.h>
+#include <vm.h>
+#include <kern/fcntl.h>
 
   /* this implementation of sys__exit does not do anything with the exit code */
   /* this needs to be fixed to get exit() and waitpid() working properly */
@@ -169,4 +172,101 @@ sys_waitpid(pid_t pid,
   return(0);
 }
 
+#if OPT_A2
+int sys_execv(char *progname, char **args) {
+  struct addrspace *as;
+  struct vnode *v;
+  vaddr_t entrypoint, stackptr;
+  int result;
+
+  /* count number of args and copy */
+  int argc = 0;
+  while (args[argc] != NULL) {
+    if (strlen(args[argc]) > 1024) {
+      return E2BIG;
+    }
+    argc++;
+  }
+  if (argc > 64) {
+    return E2BIG;
+  }
+  char **argv = (char **)kmalloc((argc + 1) * sizeof(char));
+  if (argv == NULL) {
+    return ENOMEM;
+  }
+  for (int i = 0; i < argc; i++) {
+    argv[i] = kmalloc((strlen(args[i]) + 1) * sizeof(char));
+    copyinstr((userptr_t) args[i], argv[i], strlen(args[i]) + 1, NULL);
+  }
+  argv[argc] = NULL;
+
+  if (progname == NULL) {
+    return EFAULT;
+  }
+
+  size_t proglength = strlen(progname) + 1;
+  char *prog = kmalloc(proglength * sizeof(char *));
+  copyinstr((userptr_t)progname, prog, proglength, NULL);
+  if (prog == NULL) {
+    return ENOMEM;
+  }
+
+  /* Open the file. */
+  result = vfs_open(prog, O_RDONLY, 0, &v);
+  if (result) {
+    return result;
+  }
+
+  /* Create a new address space. */
+  as = as_create();
+  if (as ==NULL) {
+    vfs_close(v);
+    return ENOMEM;
+  }
+
+  /* Switch to it and activate it. */
+  curproc_setas(as);
+  as_activate();
+
+  /* Load the executable. */
+  result = load_elf(v, &entrypoint);
+  if (result) {
+    /* p_addrspace will go away when curproc is destroyed */
+    vfs_close(v);
+    return result;
+  }
+
+  /* Done with the file now. */
+  vfs_close(v);
+
+  result = as_define_stack(as, &stackptr);
+  if (result) {
+    return result;
+  }
+
+  /* put args on stack */
+  vaddr_t str_ptr[argc + 1];
+  for (int i = argc - 1; i >= 0; i--) {
+    int space = ROUNDUP(strlen(argv[i]) + 1, 4);
+    stackptr -= space;
+    copyoutstr(argv[i], (userptr_t)stackptr, space, NULL);
+    str_ptr[i] = stackptr;
+  }
+  str_ptr[argc] = 0;
+  for (int i = argc; i >= 0; i--) {
+    stackptr -= ROUNDUP(sizeof(vaddr_t), 4);
+    copyout(&str_ptr[i], (userptr_t)stackptr, sizeof(vaddr_t));
+  }
+  vaddr_t addr = stackptr;
+  stackptr = USERSTACK - ROUNDUP(USERSTACK - stackptr, 8);
+
+  /* Warp to user mode. */
+  enter_new_process(argc /*argc*/, (userptr_t)addr /*userspace addr of argv*/,
+        stackptr, entrypoint);
+  
+  /* enter_new_process does not return. */
+  panic("enter_new_process returned\n");
+  return EINVAL;
+}
+#endif
 

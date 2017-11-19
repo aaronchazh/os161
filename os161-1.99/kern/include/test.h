@@ -82,7 +82,7 @@ int mallocstress(int, char **);
 int nettest(int, char **);
 
 /* Routine for running a user-level program. */
-int runprogram(char *progname);
+int runprogram(char *progname, char **args, int argc);
 
 /* Kernel menu system. */
 void menu(char *argstr);
@@ -92,3 +92,4 @@ void kmain(char *bootstring);
 
 
 #endif /* _TEST_H_ */
+
