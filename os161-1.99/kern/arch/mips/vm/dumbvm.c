@@ -37,6 +37,7 @@
 #include <mips/tlb.h>
 #include <addrspace.h>
 #include <vm.h>
+#include "opt-A3.h"
 
 /*
  * Dumb MIPS-only "VM system" that is intended to only be just barely
@@ -120,6 +121,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 
 	switch (faulttype) {
 	    case VM_FAULT_READONLY:
+	    return 4;
 		/* We always create pages read-write, so we can't get this */
 		panic("dumbvm: got VM_FAULT_READONLY\n");
 	    case VM_FAULT_READ:
@@ -147,6 +149,17 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		return EFAULT;
 	}
 
+	#if OPT_A3
+
+	int read_only = 0;
+
+	if (as->flush == 1) {
+		as_activate();
+		as->flush = 0;
+	}
+
+	#endif
+
 	/* Assert that the address space has been set up properly. */
 	KASSERT(as->as_vbase1 != 0);
 	KASSERT(as->as_pbase1 != 0);
@@ -170,6 +183,12 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 
 	if (faultaddress >= vbase1 && faultaddress < vtop1) {
 		paddr = (faultaddress - vbase1) + as->as_pbase1;
+
+		#if OPT_A3
+
+		read_only = 1;
+
+		#endif
 	}
 	else if (faultaddress >= vbase2 && faultaddress < vtop2) {
 		paddr = (faultaddress - vbase2) + as->as_pbase2;
@@ -195,10 +214,32 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		ehi = faultaddress;
 		elo = paddr | TLBLO_DIRTY | TLBLO_VALID;
 		DEBUG(DB_VM, "dumbvm: 0x%x -> 0x%x\n", faultaddress, paddr);
+
+		#if OPT_A3
+
+		if (as->load_complete == 1 && read_only == 1) {
+			elo &= ~TLBLO_DIRTY;
+		}
+
+		#endif
+
 		tlb_write(ehi, elo, i);
 		splx(spl);
 		return 0;
 	}
+
+	#if OPT_A3
+
+	ehi = faultaddress;
+	elo = paddr | TLBLO_DIRTY | TLBLO_VALID;
+	if (as->load_complete == 1 && read_only == 1) {
+		elo &= ~TLBLO_DIRTY;
+	}
+	tlb_random(ehi, elo);
+	splx(spl);
+	return 0;
+
+	#endif
 
 	kprintf("dumbvm: Ran out of TLB entries - cannot handle page fault\n");
 	splx(spl);
@@ -220,6 +261,13 @@ as_create(void)
 	as->as_pbase2 = 0;
 	as->as_npages2 = 0;
 	as->as_stackpbase = 0;
+
+	#if OPT_A3
+
+ 	as->load_complete = 0;
+ 	as->flush = 0;
+
+  	#endif
 
 	return as;
 }
@@ -391,3 +439,4 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	*ret = new;
 	return 0;
 }
+
