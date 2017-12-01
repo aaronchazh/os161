@@ -52,6 +52,7 @@
  */
 static struct spinlock stealmem_lock = SPINLOCK_INITIALIZER;
 
+#if OPT_A3
 struct coremap {
 	paddr_t address;
 	bool available;
@@ -61,6 +62,7 @@ struct coremap {
 struct coremap *core_map;
 
 int num_frames;
+#endif
 
 void
 vm_bootstrap(void)
