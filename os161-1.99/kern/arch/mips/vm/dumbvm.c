@@ -52,16 +52,91 @@
  */
 static struct spinlock stealmem_lock = SPINLOCK_INITIALIZER;
 
+struct coremap {
+	paddr_t address;
+	bool available;
+	int contiguous;
+};
+
+struct coremap *core_map;
+
+int num_frames;
+
 void
 vm_bootstrap(void)
 {
-	/* Do nothing. */
+	#if OPT_A3
+
+	paddr_t start;
+	paddr_t end;
+	ram_getsize(&start, &end);
+
+	core_map = (struct coremap*) PADDR_TO_KVADDR(start);
+	num_frames = (end - start)/PAGE_SIZE;
+	start += num_frames*(sizeof(struct coremap));
+	while (start % PAGE_SIZE != 0) {
+		start++;
+	}
+	num_frames = (end - start)/PAGE_SIZE;
+
+	for (int i = 0; i < num_frames; i++) {
+		core_map[i].address = i*PAGE_SIZE + start;
+		core_map[i].available = true;
+		core_map[i].contiguous = 0;
+	}
+
+	#endif
 }
 
 static
 paddr_t
 getppages(unsigned long npages)
 {
+	#if OPT_A3
+
+	spinlock_acquire(&stealmem_lock);
+	bool found = false;
+	int num_pages = (int) npages;
+	if (num_frames != 0) {
+		int start;
+		for (int i = 0; i < num_frames; i++) {
+			if (core_map[i].available) {
+				int cur_pages = 1;
+				if (num_pages == 1) {
+					start = i;
+					found = true;
+				}
+				for (int j = i + 1; j < i + num_pages; j++) {
+					if (core_map[j].available) {
+						cur_pages++;
+						if (cur_pages == num_pages) {
+							found = true;
+							start = i;
+						}
+					}
+					else {
+						i += cur_pages;
+						break;
+					}
+				}
+			}
+			if (found) {
+				core_map[start].contiguous = num_pages;
+				for (int i = start; i < start + num_pages; i++) {
+					core_map[i].available = false;
+				}
+				spinlock_release(&stealmem_lock);
+				return core_map[start].address;
+			}
+		}
+	}
+	else {
+		spinlock_release(&stealmem_lock);
+		return ram_stealmem(npages);	
+	}
+
+	#endif
+
 	paddr_t addr;
 
 	spinlock_acquire(&stealmem_lock);
@@ -87,7 +162,21 @@ alloc_kpages(int npages)
 void 
 free_kpages(vaddr_t addr)
 {
-	/* nothing - leak the memory. */
+	#if OPT_A3
+
+	spinlock_acquire(&stealmem_lock);
+	for (int i = 0; i < num_frames; i++) {
+		if (core_map[i].address == addr) {
+			core_map[i].available = true;
+			for (int j = i; j < i + core_map[i].contiguous; j++) {
+				core_map[j].available = true;
+			} 
+			core_map[i].contiguous = 0;
+		}
+	}
+	spinlock_release(&stealmem_lock);
+
+	#endif
 
 	(void)addr;
 }
@@ -275,6 +364,11 @@ as_create(void)
 void
 as_destroy(struct addrspace *as)
 {
+	#if OPT_A3
+	free_kpages(as->as_pbase1);
+	free_kpages(as->as_pbase2);
+	free_kpages(as->as_stackpbase);
+	#endif
 	kfree(as);
 }
 
